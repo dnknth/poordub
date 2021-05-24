@@ -187,6 +187,15 @@ class PcmAudio:
         return self + rarg
     
     
+    def join( self, iterable):
+        'Join segments by interleaving this audio'
+        parts = []
+        for part in iterable:
+            if parts: parts.append( self)
+            parts.append( part)
+        return sum( parts)
+
+        
     def __sub__( self, db):
         'Apply negative gain'
         return self + (-db) \
