@@ -13,7 +13,7 @@ correctly.
 
 ## `PcmAudio` objects
 
-The main (and only) class in this module is `PcmAudio`, which is a
+The main class in this module is `PcmAudio`, which is a
 shrink-wrapped version of PyDub's `AudioSegment`, but a bit less
 capable than the original:
 
@@ -64,7 +64,7 @@ To play a clip, call `audio.play()` which returns a `simpleaudio.PlayObject`.
 
 ### Fades
 
-As stated above, the only effects are fades:
+The only included effects are fades:
 
 * `audio.fade_in(duration, threshold=float('-inf'))`
 * `audio.fade_out(duration, threshold=float('-inf'))`
@@ -77,7 +77,7 @@ being faded before the actual fade is applied.
 While this sounds somewhat technical, it improves the audible 
 result of cross-fades: If one part is already very low at 
 the beginning or the end, it needs no additional fade,
-but can be used as-is in the overlay. Try -9dB for testing this.
+but can be used as-is in the overlay. Try -9dB for testing.
 
 Finally, the `gap` is the duration (in milliseconds)
 of additional silence that is inserted at each end of the 
@@ -91,13 +91,15 @@ Additionally, there are two technical operations `to_framerate()` and
 `to_sample_width()` which are used internally to ensure consistency
 between clips before appending or overlaying. 
 
-## `AudioStream`
+## Playback and recording
 
 Playback and recording use `PyAudio`, which in turn depends on the 
-cross-platform `portaudio` library. It can be installed with 
-`apt-get`, `brew` or similar.
+cross-platform `portaudio` library. The former can be installed with 
+`pip3 install PyAudio`, the latter with `apt-get`, `brew` or similar.
+`PyAudio` is not installed by default as a dependency, it should be
+done manually before microphones or speakers are used.
 
-The `AudioStream` wrapper is takes care of frame I/O in **blocking**
+The `AudioStream` wrapper takes care of frame I/O in **blocking**
 mode. The `open` method expects `PcmAudio.Params` with the desired
 number of channels, sample width and frame rate. By default, it 
 opens a stream in playback mode. Pass `input=True` for recording.
