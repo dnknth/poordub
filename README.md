@@ -1,9 +1,9 @@
-# minidub
+# poordub
 
 A minimalistic [PyDub](http://pydub.com) clone.
 
 This small package was written out of curiosity about the
-[audioop](https://docs.python.org/3/library/audioop.html) module 
+[audioop](https://docs.python.org/3/library/audioop.html) module
 in the Python standard library.
 It implements a subset of [PyDub's](http://pydub.com) features.
 
@@ -30,19 +30,19 @@ be either `wave`, `aifc`, or `sunau`.
 Approximately a second of a simple sine wave can be obtained with `PcmAudio.sine(hz)`,
 and silence with `PcmAudio.silence(millis=0)`.
 
-To add audio parts, use `+` like so: `part1 + part2`. To loop, multiply with the 
+To add audio parts, use `+` like so: `part1 + part2`. To loop, multiply with the
 number of repetitions: `audio * 3`
 
 To extract a segment from an audio clip, slice it at the desired time: `audio[start:end]`,
 where `start` and `end` should be in milliseconds, defaulting to `0` and the
-total audio length, respectively. The total audio length can be obtained with 
+total audio length, respectively. The total audio length can be obtained with
 `len(audio)`.
 
 To change the amplitude, add or subtract the desired amplitude change in
 [dB](https://en.wikipedia.org/wiki/Decibel): `audio - 3`.
 
-To overlay two audio clips, use `clip1 & clip2`, but careful: This adds the 
-signals, which might result in ugly noise if the sum of amplitudes is greater than 
+To overlay two audio clips, use `clip1 & clip2`, but careful: This adds the
+signals, which might result in ugly noise if the sum of amplitudes is greater than
 the maximum possible amplitude for the sample width. If that happens, add some
 negative gain to the clips before overlaying them.
 
@@ -71,37 +71,37 @@ The only included effects are fades:
 * `audio.cross_fade(other, duration, gap=0, threshold=float('-inf'))`
 
 For these, `duration` is in milliseconds as usual, and `threshold`
-is the minimum amplitude that needs to be exceeded in the portion 
+is the minimum amplitude that needs to be exceeded in the portion
 being faded before the actual fade is applied.
 
-While this sounds somewhat technical, it improves the audible 
-result of cross-fades: If one part is already very low at 
+While this sounds somewhat technical, it improves the audible
+result of cross-fades: If one part is already very low at
 the beginning or the end, it needs no additional fade,
 but can be used as-is in the overlay. Try -9dB for testing.
 
 Finally, the `gap` is the duration (in milliseconds)
-of additional silence that is inserted at each end of the 
-audio parts during cross-fades. It can be used to make the transition from 
+of additional silence that is inserted at each end of the
+audio parts during cross-fades. It can be used to make the transition from
 one clip to another audibly clearer.
 
 ### Misc
 
 `audio.to_mono()` and `audio.to_stereo()` do what their names suggest.
-Additionally, there are two technical operations `to_framerate()` and 
+Additionally, there are two technical operations `to_framerate()` and
 `to_sample_width()` which are used internally to ensure consistency
-between clips before appending or overlaying. 
+between clips before appending or overlaying.
 
 ## Playback and recording
 
-Playback and recording use `PyAudio`, which in turn depends on the 
-cross-platform `portaudio` library. The former can be installed with 
+Playback and recording use `PyAudio`, which in turn depends on the
+cross-platform `portaudio` library. The former can be installed with
 `pip3 install PyAudio`, the latter with `apt-get`, `brew` or similar.
 `PyAudio` is not installed by default as a dependency, it should be
 done manually before microphones or speakers are used.
 
 The `AudioStream` wrapper takes care of frame I/O in **blocking**
 mode. The `open` method expects `PcmAudio.Params` with the desired
-number of channels, sample width and frame rate. By default, it 
+number of channels, sample width and frame rate. By default, it
 opens a stream in playback mode. Pass `input=True` for recording.
 
 `AudioStream` can be used as a context manager that opens
