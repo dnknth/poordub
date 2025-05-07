@@ -1,5 +1,6 @@
-.venv3
+.venv
 __pycache__
 build
 dist
 *.egg-info
+uv.lock
