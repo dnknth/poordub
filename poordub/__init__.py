@@ -5,7 +5,7 @@ import sys
 import wave
 from array import array
 from collections import namedtuple
-from math import log, pi, sin
+from math import log10, pi, sin
 
 __all__ = ("AudioStream", "PcmAudio", "PcmValueError", "db_to_ratio", "ratio_to_db")
 
@@ -22,18 +22,11 @@ def db_to_ratio(db):
 
 def ratio_to_db(ratio):
     "Translate a scaling ratio into negative dB"
-    return MUTE if ratio <= 0 else 20 * log(float(ratio), 10)
-
-
-def sign(x):
-    "Obtain the sign of a number, one of {-1, 0, 1}"
-    return (x > 0) - (x < 0)
+    return MUTE if ratio <= 0 else 20 * log10(float(ratio))
 
 
 class PcmValueError(ValueError):
     "PcmAudio error, a subclass of `ValueError`"
-
-    pass
 
 
 class PcmAudio:
@@ -62,7 +55,7 @@ class PcmAudio:
             192_000,
         )
 
-        def __init__(self, *args, **kw):
+        def __init__(self, *_args, **_kw):
             if self.nchannels not in (1, 2):
                 raise PcmValueError(f"Illegal number of channels: {self.nchannels}")
             if self.sampwidth not in (1, 2, 3, 4):
@@ -70,15 +63,11 @@ class PcmAudio:
             if self.framerate not in self.FRAME_RATES:
                 raise PcmValueError(f"Illegal frame rate: {self.framerate}")
             if self.nframes < 0:
-                raise PcmValueError(f"Illegal number of frames: {self.framerate}")
+                raise PcmValueError(f"Illegal number of frames: {self.nframes}")
 
         def match(self, other):
             "Same number of channels, sample witdth and frame rate?"
-            return (
-                self.nchannels == other.nchannels
-                and self.sampwidth == other.sampwidth
-                and self.framerate == other.framerate
-            )
+            return self[:3] == other[:3]
 
         @property
         def frame_size(self):
@@ -88,18 +77,11 @@ class PcmAudio:
         @property
         def scale(self):
             "Maximum signed amplitude for the given sample width"
-            bits = self.sampwidth * 8
-            return int((2**bits) / 2)
+            return 1 << (self.sampwidth * 8 - 1)
 
         @classmethod
-        def max(cls, *args):
-            "Maximise the number of channels, sample witdth and frame rate"
-            return cls(
-                max(map(lambda p: p[0], args)),
-                max(map(lambda p: p[1], args)),
-                max(map(lambda p: p[2], args)),
-                0,
-            )
+        def max(cls, *params):
+            return cls(*[max(p[i] for p in params) for i in range(3)], 0)
 
     def __init__(
         self,
@@ -166,19 +148,18 @@ class PcmAudio:
     def _slice(self, start=0, stop=None):
         "Extract frames by index."
         nframes = self.params.nframes
-        if abs(start) > nframes:
-            start = nframes * sign(start)
         if stop is None:
             stop = nframes
-        elif abs(stop) > nframes:
-            stop = nframes * sign(stop)
-
-        if start < 0:
-            start = start % nframes
-        if stop < 0:
-            stop = stop % nframes
-        if start > stop:
-            start = stop
+        else:
+            if abs(start) > nframes:
+                start = nframes * ((start > 0) - (start < 0))
+            if abs(stop) > nframes:
+                stop = nframes * ((stop > 0) - (stop < 0))
+            if start < 0:
+                start = start % nframes
+            if stop < 0:
+                stop = stop % nframes
+            start = min(start, stop)
 
         return self.__class__(
             self.params,
@@ -403,13 +384,12 @@ class PcmAudio:
         from_amp = db_to_ratio(from_db)
         step_amp = (db_to_ratio(to_db) - from_amp) / steps
 
-        def get_part(step):
-            start = step * step_size
-            return self._slice(start, start + step_size)._gain(
-                from_amp + step * step_amp
+        return sum(
+            self._slice(s * step_size, (s + 1) * step_size)._gain(
+                from_amp + s * step_amp
             )
-
-        return sum(map(get_part, range(steps + 1)))
+            for s in range(steps + 1)
+        )
 
     def fade_in(self, duration, threshold=MUTE):
         """Fade in over a given number of milliseconds
@@ -519,15 +499,8 @@ class PcmAudio:
         return audio_file.getvalue()
 
     def samples(self):
-        "Convert samples to an array of signed integers"
         obj = self.to_sample_width(4) if self.params.sampwidth == 3 else self
-        if obj.params.sampwidth == 1:
-            typecode = "b"
-        elif obj.params.sampwidth == 2:
-            typecode = "h"
-        elif obj.params.sampwidth == 4:
-            typecode = "l"
-        return array(typecode, obj.frames)
+        return array({1: "b", 2: "h", 4: "l"}[obj.params.sampwidth], obj.frames)
 
 
 class AudioStream:
