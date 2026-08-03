@@ -5,22 +5,24 @@ import sys
 import wave
 from array import array
 from collections import namedtuple
+from collections.abc import Generator, Iterable
 from math import log10, pi, sin
+from typing import Any, ClassVar, Self
 
 __all__ = ("AudioStream", "PcmAudio", "PcmValueError", "db_to_ratio", "ratio_to_db")
 
-__version__ = "0.1.5"
+__version__ = "0.1.6"
 
 
 MUTE = float("-inf")
 
 
-def db_to_ratio(db):
+def db_to_ratio(db: float) -> float:
     "Translate a (negative) dB value into a scaling ratio"
     return 10 ** (float(db) / 20)
 
 
-def ratio_to_db(ratio):
+def ratio_to_db(ratio: float) -> float:
     "Translate a scaling ratio into negative dB"
     return MUTE if ratio <= 0 else 20 * log10(float(ratio))
 
@@ -40,7 +42,7 @@ class PcmAudio:
       (i.e. `audio[:5000]` for first 5s, or `audio[-5000:]` for the last 5s)
     """
 
-    class Params(namedtuple("pcm_params", "nchannels sampwidth framerate nframes")):
+    class Params(namedtuple("Params", "nchannels sampwidth framerate nframes")):
         FRAME_RATES = (
             8_000,
             11_025,
@@ -55,7 +57,7 @@ class PcmAudio:
             192_000,
         )
 
-        def __init__(self, *_args, **_kw):
+        def __init__(self, *args, **kwargs):
             if self.nchannels not in (1, 2):
                 raise PcmValueError(f"Illegal number of channels: {self.nchannels}")
             if self.sampwidth not in (1, 2, 3, 4):
@@ -65,32 +67,32 @@ class PcmAudio:
             if self.nframes < 0:
                 raise PcmValueError(f"Illegal number of frames: {self.nframes}")
 
-        def match(self, other):
+        def match(self, other: Self) -> bool:
             "Same number of channels, sample witdth and frame rate?"
             return self[:3] == other[:3]
 
         @property
-        def frame_size(self):
+        def frame_size(self) -> int:
             "Number of bytes in each frame"
             return self.sampwidth * self.nchannels
 
         @property
-        def scale(self):
+        def scale(self) -> int:
             "Maximum signed amplitude for the given sample width"
             return 1 << (self.sampwidth * 8 - 1)
 
         @classmethod
-        def max(cls, *params):
+        def max(cls, *params: Self) -> Self:
             return cls(*[max(p[i] for p in params) for i in range(3)], 0)
 
     def __init__(
         self,
-        params,
-        frames=b"",
-        nchannels=None,
-        sampwidth=None,
-        framerate=None,
-        nframes=None,
+        params: Params,
+        frames: bytes = b"",
+        nchannels: int | None = None,
+        sampwidth: int | None = None,
+        framerate: int | None = None,
+        nframes: int | None = None,
     ):
         """Construct a PcmAudio from raw data.
         :param params: audio parameters (nchannels, sampwidth, framerate, nframes)
@@ -113,24 +115,24 @@ class PcmAudio:
                 f"Illegal frame data length: {len(frames)}, expected: {self.params.frame_size * nframes}"
             )
 
-        self.frames = frames
+        self.frames: bytes = frames
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.__class__.__name__}(channels={self.params.nchannels}, duration={len(self) / 1000:.2f}s)"
 
-    def __len__(self):
+    def __len__(self) -> int:
         "Length of audio in milliseconds"
         return round(self.params.nframes / self.params.framerate * 1000)
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, PcmAudio):
             return False
         return self.params == other.params and self.frames == other.frames
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(self.params) ^ hash(self.frames)
 
-    def __getitem__(self, millis):
+    def __getitem__(self, millis: int | slice) -> Self:
         "Extract frames at milliseconds; supports slicing."
         if isinstance(millis, slice):
             if millis.step:
@@ -145,7 +147,7 @@ class PcmAudio:
             round(stop * self.params.framerate / 1000),
         )
 
-    def _slice(self, start=0, stop=None):
+    def _slice(self, start: int = 0, stop: int | None = None) -> Self:
         "Extract frames by index."
         nframes = self.params.nframes
         if stop is None:
@@ -167,7 +169,7 @@ class PcmAudio:
             nframes=stop - start,
         )
 
-    def __add__(self, other):
+    def __add__(self, other: float | Self) -> Self:
         "Apply gain, or concatenate two audios"
         if isinstance(other, (int, float)):
             if other == 0:
@@ -189,24 +191,24 @@ class PcmAudio:
             nframes=this.params.nframes + other.params.nframes,
         )
 
-    def __radd__(self, rarg):
+    def __radd__(self, rarg: int | Self) -> Self:
         "Allow use of sum() for audios"
         return self + rarg
 
-    def join(self, iterable):
+    def join(self, iterable: Iterable[Self]) -> Self:
         "Join segments by interleaving this audio"
-        parts = []
+        parts: list[Self] = []
         for part in iterable:
             if parts:
                 parts.append(self)
             parts.append(part)
         return sum(parts)
 
-    def __sub__(self, db):
+    def __sub__(self, db: float) -> Self:
         "Apply negative gain"
         return self + (-db) if isinstance(db, (int, float)) else NotImplemented
 
-    def __mul__(self, n):
+    def __mul__(self, n: int) -> Self:
         "Loop the audio `n` times"
         if not isinstance(n, int):
             return NotImplemented
@@ -218,11 +220,11 @@ class PcmAudio:
             self.params, self.frames * n, nframes=self.params.nframes * n
         )
 
-    def __rmul__(self, n):
+    def __rmul__(self, n: int) -> Self:
         "Loop the audio `n` times"
         return self * n
 
-    def __and__(self, other):
+    def __and__(self, other: Self) -> Self:
         "Overlay two audios, adding each sample"
         if not isinstance(other, PcmAudio):
             return NotImplemented
@@ -240,7 +242,7 @@ class PcmAudio:
             nframes=nframes,
         )
 
-    def _gain(self, factor):
+    def _gain(self, factor: float) -> Self:
         "Multiply the amplitude by the given factor."
         if not self.frames:
             return self  # empty clip
@@ -248,7 +250,7 @@ class PcmAudio:
             self.params, audioop.mul(self.frames, self.params.sampwidth, factor)
         )
 
-    def to_mono(self):
+    def to_mono(self) -> Self:
         "Convert stereo audio to mono"
         if self.params.nchannels == 1:
             return self
@@ -258,7 +260,7 @@ class PcmAudio:
             nchannels=1,
         )
 
-    def to_stereo(self, right=None):
+    def to_stereo(self, right: Self | None = None) -> Self:
         "Convert mono audio to stereo"
         if right is None:
             right = self
@@ -283,7 +285,7 @@ class PcmAudio:
             nchannels=2,
         )
 
-    def to_sample_width(self, sampwidth):
+    def to_sample_width(self, sampwidth: int) -> Self:
         "Convert to a new sample width"
         if self.params.sampwidth == sampwidth:
             return self
@@ -296,7 +298,7 @@ class PcmAudio:
             sampwidth=sampwidth,
         )
 
-    def to_framerate(self, framerate):
+    def to_framerate(self, framerate: int) -> Self:
         "Convert to a new frame rate"
         if self.params.framerate == framerate:
             return self
@@ -322,7 +324,7 @@ class PcmAudio:
             frames,
         )
 
-    def adjust(self, params):
+    def adjust(self, params: Params) -> Self:
         """Adjust to desired number of channels,
         sample width and framerate.
         """
@@ -338,30 +340,30 @@ class PcmAudio:
             this = this.to_framerate(params.framerate)
         return this
 
-    def _adjust_both(self, other):
+    def _adjust_both(self, other: Self) -> tuple[Self, Self]:
         """Adjust two clips to the common maximum
         number of channels, sample width and framerate.
         """
         params = self.Params.max(self.params, other.params)
         return self.adjust(params), other.adjust(params)
 
-    def _max(self):
+    def _max(self) -> int:
         return audioop.max(self.frames, self.params.sampwidth)
 
-    def max(self):
+    def max(self) -> float:
         "The absolute maximum amplitude of the audio in dB"
         return ratio_to_db(self._max() / self.params.scale)
 
-    def dbfs(self):
+    def dbfs(self) -> float:
         "Decibels relative to full scale"
         rms = audioop.rms(self.frames, self.params.sampwidth)
         return ratio_to_db(rms / self.params.scale)
 
-    def invert(self):
+    def invert(self) -> Self:
         "Invert all samples"
         return self._gain(-1)
 
-    def normalize(self, to=-0.1):
+    def normalize(self, to: float = -0.1) -> Self:
         "Normalize the audio to the given (negative dB) amplitude."
         peak = self._max()
         if peak == 0:
@@ -371,7 +373,7 @@ class PcmAudio:
         target_peak = self.params.scale * db_to_ratio(to)
         return self._gain(target_peak / peak)
 
-    def _fade(self, from_db=0, to_db=0):
+    def _fade(self, from_db: float = 0, to_db: float = 0) -> Self:
         if from_db == to_db:
             return self
 
@@ -391,7 +393,7 @@ class PcmAudio:
             for s in range(steps + 1)
         )
 
-    def fade_in(self, duration, threshold=MUTE):
+    def fade_in(self, duration: int, threshold: float = MUTE) -> Self:
         """Fade in over a given number of milliseconds
         :param duration: Milliseconds for the cross-fade
         :param threshold: Do not fade if a part is below the given dBFS, e.g. -10
@@ -401,7 +403,7 @@ class PcmAudio:
             return self
         return lead_in._fade(MUTE, 0) + self[duration:]
 
-    def fade_out(self, duration, threshold=MUTE):
+    def fade_out(self, duration: int, threshold: float = MUTE) -> Self:
         """Fade out over a given number of milliseconds
         :param duration: Milliseconds for the cross-fade
         :param threshold: Do not fade if a part is below the given dBFS, e.g. -10
@@ -411,39 +413,41 @@ class PcmAudio:
             return self
         return self[:-duration] + lead_out._fade(0, MUTE)
 
-    def cross_fade(self, other, duration, gap=0, threshold=MUTE):
+    def cross_fade(
+        self, other: Self, duration: int, gap: int = 0, threshold: float = MUTE
+    ) -> Self:
         """Cross-fade two audios.
         :param duration: Milliseconds for the cross-fade
         :param gap: Add this many ms of silence to each part
         :param threshold: Do not fade parts if dBFS is below the given amount, e.g. -10
         """
         left, right = self._adjust_both(other)
-        silence = self.__class__.silence(gap)._adjust(left)
+        silence = self.__class__.silence(gap).adjust(left)
         lead_out = left[-duration:].fade_out(duration, threshold) + silence
         lead_in = silence + right[:duration].fade_in(duration, threshold)
         return left[:-duration] + (lead_out & lead_in) + right[duration:]
 
-    def chunks(self, nframes):
+    def chunks(self, nframes: int) -> Generator[bytes]:
         "Split raw frame data into chunks of `nframes` frames"
         step = nframes * self.params.frame_size
         for start in range(0, len(self.frames), step):
             yield self.frames[start : start + step]
 
-    def _flip_sign(self):
+    def _flip_sign(self) -> Self:
         "Flip between signed and unsigned single byte samples"
         if self.params.sampwidth != 1:
             return self
         return self.__class__(self.params, audioop.bias(self.frames, 1, 0x80))
 
     @classmethod
-    def silence(cls, millis=0):
+    def silence(cls, millis: int = 0) -> Self:
         "Produce silence of a given length"
         nframes = round(cls.Params.FRAME_RATES[0] * millis / 1000)
         params = (1, 1, cls.Params.FRAME_RATES[0], nframes)
-        return cls(params, bytearray(nframes))
+        return cls(params, bytes(nframes))
 
     @classmethod
-    def sine(cls, hz=440):
+    def sine(cls, hz: int = 440) -> Self:
         "Produce nearly 1s of a 0dB sine wave with the given frequency"
         framerate = cls.Params.FRAME_RATES[6]
         nframes = round(framerate / hz) * hz
@@ -457,7 +461,7 @@ class PcmAudio:
         return cls((1, 2, framerate, nframes), frames.tobytes())
 
     @classmethod
-    def from_file(cls, audio_file, audio_format=wave):
+    def from_file(cls, audio_file: str | io.FileIO, audio_format: Any = wave) -> Self:
         """Read an audio file.
         :param audio_file: Path to audio file, or a file-like object
         :param audio_format: Python module to read audio data,
@@ -472,7 +476,12 @@ class PcmAudio:
                 frames = audioop.byteswap(frames, params.sampwidth)
             return cls(params, frames)
 
-    def to_file(self, audio_file, audio_format=wave, compression=None):
+    def to_file(
+        self,
+        audio_file: str | io.IOBase,
+        audio_format: Any = wave,
+        compression: str | None = None,
+    ) -> None:
         """Write an audio file.
         :param audio_file: Path to audio file, or a file-like object
         :param audio_format: Python module to write audio data,
@@ -492,13 +501,15 @@ class PcmAudio:
                 frames = audioop.byteswap(frames, self.params.sampwidth)
             audio.writeframesraw(frames)
 
-    def to_buffer(self, audio_format=wave, compression=None):
+    def to_buffer(
+        self, audio_format: Any = wave, compression: str | None = None
+    ) -> bytes:
         "Write file contents to a memory buffer."
         audio_file = io.BytesIO()
         self.to_file(audio_file, audio_format, compression)
         return audio_file.getvalue()
 
-    def samples(self):
+    def samples(self) -> array[int]:
         obj = self.to_sample_width(4) if self.params.sampwidth == 3 else self
         return array({1: "b", 2: "h", 4: "l"}[obj.params.sampwidth], obj.frames)
 
@@ -509,29 +520,29 @@ class AudioStream:
     """
 
     CHUNK_SIZE = 1024
-    PY_AUDIO = None
+    PY_AUDIO: Any = None
 
     # Common presets
-    MONO_16KHZ = PcmAudio.Params(1, 2, 16000, 0)
-    CD_AUDIO = PcmAudio.Params(2, 2, 44100, 0)
+    MONO_16KHZ: ClassVar[PcmAudio.Params] = PcmAudio.Params(1, 2, 16000, 0)
+    CD_AUDIO: ClassVar[PcmAudio.Params] = PcmAudio.Params(2, 2, 44100, 0)
 
-    def __init__(self, params=None):
+    def __init__(self, params: PcmAudio.Params | None = None):
         """Initialize the stream and PyAudio.
         If no parameters are given,
         the output device defaults are used.
         """
         if self.PY_AUDIO is None:
-            import pyaudio  # type: ignore
+            import pyaudio
 
             self.__class__.PY_AUDIO = pyaudio.PyAudio()
             atexit.register(self.PY_AUDIO.terminate)
-        self.stream = None
+        self.stream: Any = None
         if params:
             self.params = PcmAudio.Params(*params)
         else:
             self.params = self._get_device_params()
 
-    def _get_device_params(self):
+    def _get_device_params(self) -> PcmAudio.Params:
         "Obtain default parameters from the output device"
         device_info = self.PY_AUDIO.get_default_output_device_info()
         return PcmAudio.Params(
@@ -541,20 +552,20 @@ class AudioStream:
             0,
         )
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.__class__.__name__}(channels={self.params.nchannels}, framerate={self.params.framerate})"
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         "Open the stream if needed"
         return self.open() if not self.stream else self
 
     def open(
         self,
-        input=False,
-        output=True,
-        input_device_index=None,
-        output_device_index=None,
-    ):
+        input: bool = False,
+        output: bool = True,
+        input_device_index: int | None = None,
+        output_device_index: int | None = None,
+    ) -> Self:
         "Open a stream for I/O."
 
         if self.stream:
@@ -572,34 +583,34 @@ class AudioStream:
         )
         return self
 
-    def _check(self):
+    def _check(self) -> None:
         "Ensure that my stream is open"
         if not self.stream:
             raise PcmValueError("Stream is closed")
 
-    def play(self, audio):
+    def play(self, audio: PcmAudio) -> None:
         "Play an audio in blocking mode."
         self._check()
         audio = audio.adjust(self.params)._flip_sign()
         for chunk in audio.chunks(self.CHUNK_SIZE):
             self.stream.write(chunk)
 
-    def record(self, milliseconds):
+    def record(self, milliseconds: int) -> PcmAudio:
         "Record an audio clip in blocking mode"
         self._check()
         nframes = round(self.params.framerate * milliseconds / 1000)
-        frames = bytearray(nframes)
+        frames = bytes(nframes)
         for frame in range(0, nframes, self.CHUNK_SIZE):
             part = self.stream.read(min(nframes - frame, self.CHUNK_SIZE))
             start = frame * self.params.frame_size
             frames[start : start + len(part)] = part
         return PcmAudio(self.params, frames, nframes=nframes)._flip_sign()
 
-    def __exit__(self, type, value, traceback):
+    def __exit__(self, type: object, value: object, traceback: object) -> None:
         "Safely close the stream."
         self.close()
 
-    def close(self):
+    def close(self) -> None:
         "Close the stream."
         if self.stream:
             self.stream.stop_stream()

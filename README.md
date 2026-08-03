@@ -19,7 +19,7 @@ The main class. A lighter version of PyDub's `AudioSegment`:
 ### Creating audio
 
 ```python
-from_file = PcmAudio.from_file("sound.wav")          # read a file
+from_file = PcmAudio.from_file("sound.wav")           # read a file
 sine_wave = PcmAudio.sine(hz=440)                     # ~1s sine tone
 silence   = PcmAudio.silence(millis=1000)             # 1s silence
 ```
@@ -40,8 +40,8 @@ silence   = PcmAudio.silence(millis=1000)             # 1s silence
 ### Fades
 
 ```python
-a.fade_in(500)                        # fade in over 500ms
-a.fade_out(500)                       # fade out over 500ms
+a.fade_in(500)                              # fade in over 500ms
+a.fade_out(500)                             # fade out over 500ms
 a.cross_fade(b, 300, gap=50, threshold=-9)  # cross-fade with silence gap
 ```
 
@@ -60,7 +60,7 @@ a.to_sample_width(2)                  # change bit depth
 
 ```python
 a.to_file("out.wav")                  # write to disk
-buf = a.to_buffer()                   # write to BytesIO
+buf = a.to_buffer()                   # raw sample bytes
 ```
 
 ## Playback & recording
