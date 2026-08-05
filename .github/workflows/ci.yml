@@ -4,29 +4,19 @@ on: [push]
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12"]
-
     steps:
       - uses: actions/checkout@v3
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
         with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install ruff unittest-xml-reporting
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          version: "latest"
       - name: Run tests
         run: |
-          python -m xmlrunner discover
+          uv run -w unittest-xml-reporting -m xmlrunner discover
       - name: Publish test results
         uses: dorny/test-reporter@v1
         with:
           name: Tests
-          path: 'TEST-*.xml'
+          path: "TEST-*.xml"
           reporter: java-junit

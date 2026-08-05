@@ -7,11 +7,11 @@ from array import array
 from collections import namedtuple
 from collections.abc import Generator, Iterable
 from math import log10, pi, sin
-from typing import Any, ClassVar, Self
+from typing import IO, Any, ClassVar, Self
 
 __all__ = ("AudioStream", "PcmAudio", "PcmValueError", "db_to_ratio", "ratio_to_db")
 
-__version__ = "0.1.6"
+__version__ = "0.1.7"
 
 
 MUTE = float("-inf")
@@ -83,11 +83,16 @@ class PcmAudio:
 
         @classmethod
         def max(cls, *params: Self) -> Self:
-            return cls(*[max(p[i] for p in params) for i in range(3)], 0)
+            return cls(
+                max(p[0] for p in params),
+                max(p[1] for p in params),
+                max(p[2] for p in params),
+                0,
+            )
 
     def __init__(
         self,
-        params: Params,
+        params: Params | tuple[int, int, int, int] | tuple[int, int, int],
         frames: bytes = b"",
         nchannels: int | None = None,
         sampwidth: int | None = None,
@@ -152,16 +157,18 @@ class PcmAudio:
         nframes = self.params.nframes
         if stop is None:
             stop = nframes
-        else:
-            if abs(start) > nframes:
-                start = nframes * ((start > 0) - (start < 0))
-            if abs(stop) > nframes:
-                stop = nframes * ((stop > 0) - (stop < 0))
-            if start < 0:
-                start = start % nframes
-            if stop < 0:
-                stop = stop % nframes
-            start = min(start, stop)
+
+        # Normalize negative indices like Python's slice semantics
+        if start < 0:
+            start = max(0, nframes + start)
+        if stop < 0:
+            stop = max(0, nframes + stop)
+
+        start = min(start, nframes)
+        stop = min(stop, nframes)
+
+        if start > stop:
+            return self.__class__(self.params, nframes=0)
 
         return self.__class__(
             self.params,
@@ -202,7 +209,7 @@ class PcmAudio:
             if parts:
                 parts.append(self)
             parts.append(part)
-        return sum(parts)
+        return sum(parts, self.__class__.silence(0))
 
     def __sub__(self, db: float) -> Self:
         "Apply negative gain"
@@ -381,17 +388,18 @@ class PcmAudio:
             step_size = 1  # frame by frame
         else:
             step_size = round(self.params.framerate / 1000)  # one ms
-        steps = round(self.params.nframes / step_size)
 
+        nsteps = max(1, (self.params.nframes + step_size - 1) // step_size)
         from_amp = db_to_ratio(from_db)
-        step_amp = (db_to_ratio(to_db) - from_amp) / steps
+        step_amp = (db_to_ratio(to_db) - from_amp) / nsteps
 
-        return sum(
-            self._slice(s * step_size, (s + 1) * step_size)._gain(
-                from_amp + s * step_amp
-            )
-            for s in range(steps + 1)
-        )
+        result = self.__class__.silence()
+        n, s = 0, 0
+        while n < self.params.nframes:
+            end = min(n + step_size, self.params.nframes)
+            result += self._slice(n, end)._gain(from_amp + step_amp * s)
+            n, s = end, s + 1
+        return result
 
     def fade_in(self, duration: int, threshold: float = MUTE) -> Self:
         """Fade in over a given number of milliseconds
@@ -422,7 +430,7 @@ class PcmAudio:
         :param threshold: Do not fade parts if dBFS is below the given amount, e.g. -10
         """
         left, right = self._adjust_both(other)
-        silence = self.__class__.silence(gap).adjust(left)
+        silence = self.__class__.silence(gap).adjust(left.params)
         lead_out = left[-duration:].fade_out(duration, threshold) + silence
         lead_in = silence + right[:duration].fade_in(duration, threshold)
         return left[:-duration] + (lead_out & lead_in) + right[duration:]
@@ -461,7 +469,7 @@ class PcmAudio:
         return cls((1, 2, framerate, nframes), frames.tobytes())
 
     @classmethod
-    def from_file(cls, audio_file: str | io.FileIO, audio_format: Any = wave) -> Self:
+    def from_file(cls, audio_file: str | IO[bytes], audio_format: Any = wave) -> Self:
         """Read an audio file.
         :param audio_file: Path to audio file, or a file-like object
         :param audio_format: Python module to read audio data,
@@ -511,7 +519,7 @@ class PcmAudio:
 
     def samples(self) -> array[int]:
         obj = self.to_sample_width(4) if self.params.sampwidth == 3 else self
-        return array({1: "b", 2: "h", 4: "l"}[obj.params.sampwidth], obj.frames)
+        return array({1: "b", 2: "h", 4: "i"}[obj.params.sampwidth], obj.frames)
 
 
 class AudioStream:
@@ -532,7 +540,7 @@ class AudioStream:
         the output device defaults are used.
         """
         if self.PY_AUDIO is None:
-            import pyaudio
+            import pyaudio  # type: ignore
 
             self.__class__.PY_AUDIO = pyaudio.PyAudio()
             atexit.register(self.PY_AUDIO.terminate)
@@ -599,12 +607,12 @@ class AudioStream:
         "Record an audio clip in blocking mode"
         self._check()
         nframes = round(self.params.framerate * milliseconds / 1000)
-        frames = bytes(nframes)
+        frames = bytearray(nframes * self.params.frame_size)
         for frame in range(0, nframes, self.CHUNK_SIZE):
             part = self.stream.read(min(nframes - frame, self.CHUNK_SIZE))
             start = frame * self.params.frame_size
             frames[start : start + len(part)] = part
-        return PcmAudio(self.params, frames, nframes=nframes)._flip_sign()
+        return PcmAudio(self.params, bytes(frames), nframes=nframes)._flip_sign()
 
     def __exit__(self, type: object, value: object, traceback: object) -> None:
         "Safely close the stream."
@@ -622,8 +630,8 @@ if __name__ == "__main__":  # Demo code
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("infile", type=argparse.FileType("rb"), help="Input file")
-    parser.add_argument("outfile", type=argparse.FileType("wb"), help="Output file")
+    parser.add_argument("infile", help="Input file")
+    parser.add_argument("outfile", help="Output file")
     parser.add_argument(
         "-n", "--normalize", action="store_true", help="Normalize input"
     )
