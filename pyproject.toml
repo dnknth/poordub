@@ -16,6 +16,11 @@ classifiers = [
 dynamic = ["version"]
 dependencies = ["audioop-lts>=0.2.1 ; python_full_version >= '3.13'"]
 
+[dependency-groups]
+dev = [
+    "coverage>=7.15.4",
+]
+
 [project.urls]
 Repository = "https://github.com/dnknth/poordub"
 

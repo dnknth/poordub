@@ -3,7 +3,7 @@
 import io
 import unittest
 
-from poordub import MUTE, AudioStream, PcmAudio, PcmValueError
+from poordub import MUTE, AudioStream, PcmAudio, PcmValueError, db_to_ratio, ratio_to_db
 
 
 class TestPcmAudio(unittest.TestCase):
@@ -203,6 +203,141 @@ class TestPcmAudio(unittest.TestCase):
             wave_file.seek(0)
             read_back = PcmAudio.from_file(wave_file)  # Read back
             self.assertEqual(self.SINE_440, read_back)  # Compare
+
+    def test_to_sample_width(self):
+        "Convert sample widths"
+        widened = self.SINE_440.to_sample_width(4)
+        self.assertEqual(4, widened.params.sampwidth)
+        self.assertEqual(len(self.SINE_440), len(widened))
+        self.assertAlmostEqual(self.SINE_440.dbfs(), widened.dbfs(), 1)
+
+        # Round-trip back to 16-bit is lossless
+        self.assertEqual(self.SINE_440, widened.to_sample_width(2))
+        # No-op when the width already matches
+        self.assertEqual(self.SINE_440, self.SINE_440.to_sample_width(2))
+        # Illegal width
+        with self.assertRaises(PcmValueError):
+            self.SINE_440.to_sample_width(5)
+
+    def test_to_framerate(self):
+        "Convert frame rates"
+        resampled = self.SINE_440.to_framerate(22050)
+        self.assertEqual(22050, resampled.params.framerate)
+        self.assertAlmostEqual(1, len(resampled) / 1000, 2)  # Duration kept
+
+        # No-op when the rate already matches
+        self.assertEqual(self.SINE_440, self.SINE_440.to_framerate(44100))
+        # Illegal rate
+        with self.assertRaises(PcmValueError):
+            self.SINE_440.to_framerate(800)
+
+    def test_adjust(self):
+        "Adjust channels, sample width and framerate at once"
+        target = PcmAudio.Params(2, 4, 48000, 0)
+        adjusted = self.SINE_440.adjust(target)
+        self.assertEqual(2, adjusted.params.nchannels)
+        self.assertEqual(4, adjusted.params.sampwidth)
+        self.assertEqual(48000, adjusted.params.framerate)
+        # Duration is preserved
+        self.assertAlmostEqual(
+            len(self.SINE_440) / 1000, len(adjusted) / 1000, 2
+        )
+
+    def test_chunks(self):
+        "Split frame data into fixed-size chunks"
+        chunks = list(self.SINE_440.chunks(1024))
+        # All but the last chunk are exactly 1024 frames
+        for chunk in chunks[:-1]:
+            self.assertEqual(1024 * self.SINE_440.params.frame_size, len(chunk))
+        # Chunks reassemble into the full frame data
+        self.assertEqual(self.SINE_440.frames, b"".join(chunks))
+        # Empty audio has no chunks
+        self.assertEqual([], list(self.EMPTY.chunks(1024)))
+
+    def test_samples(self):
+        "Expose raw samples as an array"
+        samples = self.SINE_440.samples()
+        self.assertEqual(self.SINE_440.params.nframes, len(samples))
+        self.assertEqual("h", samples.typecode)  # 16-bit signed
+        self.assertEqual(0, samples[0])  # Sine starts at zero
+
+        # 4-byte samples use C int (4 bytes), not long
+        self.assertEqual(4, self.SINE_440.to_sample_width(4).samples().itemsize)
+
+        # 8-bit samples are signed bytes
+        silence = self.SILENCE.samples()
+        self.assertEqual("b", silence.typecode)
+        self.assertEqual(0, silence[0])
+
+    def test_join(self):
+        "Interleave a clip between several others"
+        joined = self.SINE_440.join([self.SINE_880, self.SINE_880])
+        # SINE_880 + SINE_440 + SINE_880
+        self.assertEqual(self.SINE_880 + self.SINE_440 + self.SINE_880, joined)
+
+        # Joining a single clip is just that clip
+        self.assertEqual(self.SINE_880, self.SINE_440.join([self.SINE_880]))
+
+    def test_cross_fade(self):
+        "Overlap two clips with a cross-fade"
+        cf = self.SINE_440.cross_fade(self.SINE_880, 500)
+        # Overlap of 500 ms, so shorter than the sum of both
+        self.assertLess(len(cf), len(self.SINE_440) + len(self.SINE_880))
+        self.assertAlmostEqual(
+            (len(self.SINE_440) + len(self.SINE_880) - 500) / 1000,
+            len(cf) / 1000,
+            2,
+        )
+        # Both clips are adjusted to a common format
+        self.assertEqual(44100, cf.params.framerate)
+
+        # A gap adds silence to each part
+        gapped = self.SINE_440.cross_fade(self.SINE_880, 500, gap=100)
+        self.assertGreater(len(gapped), len(cf))
+
+
+class TestConversions(unittest.TestCase):
+    "Test the dB conversion helpers."
+
+    def test_db_to_ratio(self):
+        self.assertEqual(1, db_to_ratio(0))
+        self.assertEqual(0.1, db_to_ratio(-20))
+        self.assertAlmostEqual(0.501187, db_to_ratio(-6), 5)
+
+    def test_ratio_to_db(self):
+        self.assertEqual(MUTE, ratio_to_db(0))
+        self.assertEqual(MUTE, ratio_to_db(-1))
+        self.assertEqual(0, ratio_to_db(1))
+        self.assertEqual(-20, ratio_to_db(0.1))
+
+    def test_roundtrip(self):
+        self.assertAlmostEqual(-6, ratio_to_db(db_to_ratio(-6)), 5)
+
+
+class TestParams(unittest.TestCase):
+    "Test the audio parameter tuple."
+
+    def test_max(self):
+        params = PcmAudio.Params.max(
+            PcmAudio.Params(1, 2, 44100, 0),
+            PcmAudio.Params(2, 2, 44100, 0),
+        )
+        self.assertEqual(PcmAudio.Params(2, 2, 44100, 0), params)
+
+    def test_match(self):
+        base = PcmAudio.Params(1, 2, 44100, 100)
+        self.assertTrue(base.match(PcmAudio.Params(1, 2, 44100, 200)))
+        self.assertFalse(base.match(PcmAudio.Params(2, 2, 44100, 200)))
+
+    def test_validation(self):
+        with self.assertRaises(PcmValueError):
+            PcmAudio.Params(3, 2, 44100, 0)
+        with self.assertRaises(PcmValueError):
+            PcmAudio.Params(1, 5, 44100, 0)
+        with self.assertRaises(PcmValueError):
+            PcmAudio.Params(1, 2, 800, 0)
+        with self.assertRaises(PcmValueError):
+            PcmAudio.Params(1, 2, 44100, -1)
 
 
 if __name__ == "__main__":
