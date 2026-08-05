@@ -11,7 +11,7 @@ from typing import Any, ClassVar, Self
 
 __all__ = ("AudioStream", "PcmAudio", "PcmValueError", "db_to_ratio", "ratio_to_db")
 
-__version__ = "0.1.6"
+__version__ = "0.1.7"
 
 
 MUTE = float("-inf")
@@ -152,16 +152,18 @@ class PcmAudio:
         nframes = self.params.nframes
         if stop is None:
             stop = nframes
-        else:
-            if abs(start) > nframes:
-                start = nframes * ((start > 0) - (start < 0))
-            if abs(stop) > nframes:
-                stop = nframes * ((stop > 0) - (stop < 0))
-            if start < 0:
-                start = start % nframes
-            if stop < 0:
-                stop = stop % nframes
-            start = min(start, stop)
+
+        # Normalize negative indices like Python's slice semantics
+        if start < 0:
+            start = max(0, nframes + start)
+        if stop < 0:
+            stop = max(0, nframes + stop)
+
+        start = min(start, nframes)
+        stop = min(stop, nframes)
+
+        if start > stop:
+            return self.__class__(self.params, nframes=0)
 
         return self.__class__(
             self.params,
@@ -381,17 +383,18 @@ class PcmAudio:
             step_size = 1  # frame by frame
         else:
             step_size = round(self.params.framerate / 1000)  # one ms
-        steps = round(self.params.nframes / step_size)
 
+        nsteps = max(1, (self.params.nframes + step_size - 1) // step_size)
         from_amp = db_to_ratio(from_db)
-        step_amp = (db_to_ratio(to_db) - from_amp) / steps
+        step_amp = (db_to_ratio(to_db) - from_amp) / nsteps
 
-        return sum(
-            self._slice(s * step_size, (s + 1) * step_size)._gain(
-                from_amp + s * step_amp
-            )
-            for s in range(steps + 1)
-        )
+        result = self.__class__.silence()
+        n, s = 0, 0
+        while n < self.params.nframes:
+            end = min(n + step_size, self.params.nframes)
+            result += self._slice(n, end)._gain(from_amp + step_amp * s)
+            n, s = end, s + 1
+        return result
 
     def fade_in(self, duration: int, threshold: float = MUTE) -> Self:
         """Fade in over a given number of milliseconds
@@ -599,12 +602,12 @@ class AudioStream:
         "Record an audio clip in blocking mode"
         self._check()
         nframes = round(self.params.framerate * milliseconds / 1000)
-        frames = bytes(nframes)
+        frames = bytearray(nframes * self.params.frame_size)
         for frame in range(0, nframes, self.CHUNK_SIZE):
             part = self.stream.read(min(nframes - frame, self.CHUNK_SIZE))
             start = frame * self.params.frame_size
             frames[start : start + len(part)] = part
-        return PcmAudio(self.params, frames, nframes=nframes)._flip_sign()
+        return PcmAudio(self.params, bytes(frames), nframes=nframes)._flip_sign()
 
     def __exit__(self, type: object, value: object, traceback: object) -> None:
         "Safely close the stream."
